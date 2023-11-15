@@ -1,11 +1,5 @@
-
-
 import sys
 import heapq
-import networkx as nx
-import matplotlib.cm as cm
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 
 class Grafo:
     def __init__(self, numVertices):
@@ -78,8 +72,6 @@ class Grafo:
                     print(f"{self.matAdj[i][j]:>3}", end=" ")
             print("")
 
-
-
 def ler_arquivo_grafo(nome_arquivo, numero_vertices):
     grafo = Grafo(numero_vertices)
     with open(nome_arquivo, 'r') as arquivo:
@@ -91,42 +83,41 @@ def ler_arquivo_grafo(nome_arquivo, numero_vertices):
             grafo.adicionarAresta(vertice1, vertice2, peso)
     return grafo
 
-# altere o numero de vertices para o codigo não quebrar
-grafo = ler_arquivo_grafo('grafo1.txt', 6)
+from mip import Model, xsum, minimize, BINARY
 
-# teste para ver se caminho minimo funciona
-origem = 0
-destino = 5
-caminhoMinimo = [origem] + grafo.encontraCaminhoMinimo(origem, destino)
-print(f"\nCaminho minimo PARTINDO de ({origem}) PARA ({destino}): {caminhoMinimo}\n")
+def shortest_path_mip(grafo, origem, destino):
+    model = Model()
 
+    # variáveis de decisão
+    x = [[model.add_var(var_type=BINARY) for j in range(len(grafo))] for i in range(len(grafo))]
+
+    # função objetivo
+    model.objective = minimize(xsum(grafo[i][j] * x[i][j] for i in range(len(grafo)) for j in range(len(grafo))))
+
+    # restrições
+    model += xsum(x[origem][j] for j in range(len(grafo))) == 1  # restrição de origem
+    for i in range(len(grafo)):
+        model += xsum(x[j][i] for j in range(len(grafo))) - xsum(x[i][j] for j in range(len(grafo))) == 0  # restrição de fluxo
+    model += xsum(x[j][destino] for j in range(len(grafo))) == 1  # restrição de destino
+
+    # encontrando caminho mínimo
+    model.optimize()
+
+    return [i for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99]  # retornando resultado
+
+if len(sys.argv) < 5:
+    print("Usage: python caminhoMinimo.py <nome_arquivo> <quantidade_vertices> <origem> <destino>")
+    sys.exit(1)
+
+nome_arquivo = sys.argv[1]
+quantidade_vertices = int(sys.argv[2])
+origem = int(sys.argv[3])
+destino = int(sys.argv[4])
+
+grafo = ler_arquivo_grafo(nome_arquivo, quantidade_vertices)
 grafo.mostraGrafo()
 
+resultado_dijkstra = [origem] + grafo.encontraCaminhoMinimo(origem, destino)
+resultado_MIP = shortest_path_mip(grafo._matAdj, origem, destino)
 
-# MODELO LINEAR ABAIXO AINDA SEM TESTE
-# from mip import Model, xsum, minimize, BINARY
-
-# def shortest_path_mip(grafo, source, destination):
-#     # Initialize the model
-#     model = Model()
-
-#     # Define the variables
-#     x = [[model.add_var(var_type=BINARY) for j in range(len(grafo))] for i in range(len(grafo))]
-
-#     # Define the objective function
-#     model.objective = minimize(xsum(grafo[i][j]*x[i][j] for i in range(len(grafo)) for j in range(len(grafo))))
-
-#     # Define the constraints
-#     for i in range(len(grafo)):
-#         model += xsum(x[i][j] for j in range(len(grafo))) == 1
-#         model += xsum(x[j][i] for j in range(len(grafo))) == 1
-
-#     # Additional constraints for source and destination
-#     model += xsum(x[source][j] for j in range(len(grafo))) == 1
-#     model += xsum(x[j][destination] for j in range(len(grafo))) == 0
-
-#     # Solve the model
-#     model.optimize()
-
-#     # Return the solution
-#     return [[i, j] for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99]
+print(f"\nCaminho minimo PARTINDO de ({origem}) PARA ({destino}):\nDIJKSTRA: {resultado_dijkstra}\nMIP: {resultado_MIP}\n")
