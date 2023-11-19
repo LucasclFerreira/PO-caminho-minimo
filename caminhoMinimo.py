@@ -1,9 +1,9 @@
 import sys
-import time
 import heapq
 import random
 import networkx as nx
 import matplotlib.pyplot as plt
+from mip import Model, xsum, minimize, BINARY
 
 class Grafo:
     def __init__(self, numVertices, origem=0, destino=None):
@@ -89,7 +89,7 @@ class Grafo:
                 if self.matAdj[i][j] != sys.maxsize:
                     G.add_edge(i, j, weight=self.matAdj[i][j])
 
-        pos = nx.circular_layout(G)  # You can use a different layout if needed
+        pos = nx.shell_layout(G)  # You can use a different layout if needed
         labels = nx.get_edge_attributes(G, 'weight')
         nx.draw(G, pos, with_labels=True)
         nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
@@ -104,19 +104,7 @@ class Grafo:
         plt.savefig(nome_grafo)
         plt.show()
 
-def ler_arquivo_grafo(nome_arquivo, numero_vertices):
-    grafo = Grafo(numero_vertices)
-    with open(nome_arquivo, 'r') as arquivo:
-        for linha in arquivo:
-            dados = linha.strip().split(',')
-            vertice1 = int(dados[0])
-            vertice2 = int(dados[1])
-            peso = int(dados[2])
-            grafo.adicionarAresta(vertice1, vertice2, peso)
-    return grafo
-
-from mip import Model, xsum, minimize, BINARY, OptimizationStatus
-
+# Caminho mínimo usando MIP
 def shortest_path_mip(grafo, origem, destino):
     modelo = Model()
 
@@ -127,95 +115,48 @@ def shortest_path_mip(grafo, origem, destino):
     modelo.objective = minimize(xsum(grafo[i][j] * x[i][j] for i in range(len(grafo)) for j in range(len(grafo))))
 
     # restrições
-    # modelo += xsum(x[origem][j] for j in range(len(grafo))) == 1  # restrição de origem
-    # for k in range(len(grafo)):
-    #     modelo += xsum(x[i][k] for i in range(len(grafo))) - xsum(x[k][j] for j in range(len(grafo))) == 0  # restrição de fluxo
-    # modelo += -xsum(x[i][destino] for i in range(len(grafo))) == -1  # restrição de destino
-
-    # is the following correct?
     modelo += xsum(x[origem][j] for j in range(len(grafo))) == 1  # restrição de origem
-    for k in range(origem+1, destino):
-        modelo += xsum(x[i][k] for i in range(len(grafo))) + xsum(-1 * x[k][j] for j in range(len(grafo))) == 0  # restrição de fluxo
-    modelo += xsum(x[i][destino] for i in range(len(grafo))) == 1  # restrição de destino
+    for k in range(1, len(grafo) - 1):
+        if k != destino and k != origem:
+            modelo += xsum(x[i][k] for i in range(len(grafo))) - xsum(x[k][j] for j in range(len(grafo))) == 0  # restrição de fluxo
+    modelo += -xsum(x[i][destino] for i in range(len(grafo))) == -1  # restrição de destino
 
     # encontrando caminho mínimo
     modelo.optimize()
 
-    return [(i, j) for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99]
-    # return [i for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99]  # retornando resultado
+    # retornando uma tupla com a solução no seguinte formato: (arestas, vértices)
+    return ([(i, j) for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99], [i for i in range(len(grafo)) for j in range(len(grafo)) if x[i][j].x >= 0.99])
+
 
 # gera um grafo aleatório com base no número de vértices e arestas
 def gerar_grafo_aleatorio(num_vertices, num_arestas, semente=42):
     G = nx.gnm_random_graph(num_vertices, num_arestas, directed=True, seed=semente)
-    # G = nx.dense_gnm_random_graph(num_vertices, num_arestas, seed=semente)
-    # G = nx.gnp_random_graph(num_vertices, 0.25, seed=semente, directed=True)
     for aresta in G.edges:
         peso = random.randint(5, 100)
         G.edges[aresta]['weight'] = peso
     return G
 
-# função que permite visualizar e salvar imagem dos grafos gerados
-def visualizar_grafo(G, nome_grafo):
-    pos = nx.spring_layout(G)
-    rotulos = nx.get_edge_attributes(G, 'weight')
-    nx.draw(G, pos, with_labels=True, font_weight='bold', arrowsize=15)
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=rotulos)
-    plt.savefig(nome_grafo)
-    plt.show()
-
-def instanciar_grafo(grafo_aleatorio):
-    grafo = Grafo(len(grafo_aleatorio.nodes))
+# instancia da classe Grafo a partir de um grafo aleatório
+def instanciar_grafo(grafo_aleatorio, destino):
+    grafo = Grafo(len(grafo_aleatorio.nodes), destino=destino)
     for aresta in grafo_aleatorio.edges:
         origem, destino = aresta
         peso = grafo_aleatorio.edges[aresta]['weight']
         grafo.adicionarAresta(origem, destino, peso)
     return grafo
 
-grafos = []        # lista para armazenar os grafos gerados
-n = 21              # número inicial de vértices
-mip_results = []
-idx = 0
+# variáveis utilitárias
+n_vertices = 23
+n_arestas = 2 * (n_vertices - 1)
+destino = 10
 
-for i in range(5):
-    # utilitários
-    origem = 0
-    destino = n - 1
-    n_arestas = 2 * (n - 1)
+# criando grafo
+novo_grafo = gerar_grafo_aleatorio(n_vertices, n_arestas, semente=39)
+novo_grafo = instanciar_grafo(novo_grafo, destino=destino)
 
-    # gerando, salvando a imagem, instanciando e adicionando o grafo aleatório à lista de grafos
-    grafo_aleat = gerar_grafo_aleatorio(n, n_arestas, semente=43)
-    grafo_aleat = instanciar_grafo(grafo_aleat)
-    grafos.append(grafo_aleat)
+# resultados
+resultado_dijkstra = [novo_grafo.origem] + novo_grafo.encontraCaminhoMinimo()
+arestas_MIP, resultado_MIP = shortest_path_mip(novo_grafo._matAdj, novo_grafo.origem, novo_grafo.destino)
+novo_grafo.plotarGrafo(f'grafo.svg', arestas_MIP)
 
-    # encontrando caminho mínimo
-    resultado_dijkstra = [grafo_aleat.origem] + grafo_aleat.encontraCaminhoMinimo()
-    resultado_MIP = shortest_path_mip(grafo_aleat._matAdj, grafo_aleat.origem, grafo_aleat.destino)
-    # print(resultado_MIP)
-    mip_results.append(resultado_MIP)
-    print(f"\nCaminho minimo PARTINDO de ({grafo_aleat.origem}) PARA ({grafo_aleat.destino}):\nDIJKSTRA: {resultado_dijkstra}\nMIP: {resultado_MIP}\n")
-
-    # dobrando o número de vértices e o número de arestas para o próximo grafo
-    n += 1
-    # num_arestas += 4
-
-grafos[idx].plotarGrafo(f'grafo{idx+1}.svg', mip_results[idx])
-grafos[idx].mostraGrafo()
-print(f'MIP RESULTS: {mip_results[idx]}')
-# cont = 1
-# for grafo in grafos:
-#     grafo.plotarGrafo(f'grafo{cont}.png')
-#     grafo.mostraGrafo()
-#     # time.sleep(2)
-#     cont += 1
-
-# visualizar_grafo(grafos[0], f'grafo1.png')
-# visualizar_grafo(grafos[1], f'grafo2.png')
-# visualizar_grafo(grafos[2], f'grafo3.png')
-# visualizar_grafo(grafos[3], f'grafo4.png')
-# visualizar_grafo(grafos[4], f'grafo5.png')
-
-
-
-# teste_grafo = instanciar_grafo(random_integer_weighted_directed_graph)
-cam_min1 = grafos[idx].encontraCaminhoMinimo()
-print(f'DIJKSTRA: {[grafos[idx].origem] + cam_min1}')
+print(f"\nCaminho minimo PARTINDO de ({novo_grafo.origem}) PARA ({novo_grafo.destino}):\nDIJKSTRA: {resultado_dijkstra}\nMIP: {resultado_MIP + [destino]}\n")
